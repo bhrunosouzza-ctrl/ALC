@@ -1,0 +1,40 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  
+  --color-bg-base: #0D0F12;
+  --color-bg-surface: #161B22;
+  --color-bg-card: #1C2128;
+  --color-border-theme: #30363D;
+  --color-text-primary: #E6EDF3;
+  --color-text-secondary: #8B949E;
+  --color-accent-success: #3FB950;
+  --color-accent-warn: #D29922;
+  --color-accent-danger: #F85149;
+}
+
+@layer base {
+  body {
+    @apply font-sans antialiased bg-bg-base text-text-primary;
+  }
+}
+
+@layer components {
+  .sidebar-label {
+    @apply text-[11px] uppercase tracking-wider text-text-secondary font-bold mb-2 block;
+  }
+  
+  .sidebar-select {
+    @apply w-full bg-bg-card border border-border-theme text-text-primary px-3 py-2 rounded-lg text-sm outline-none focus:ring-1 focus:ring-accent-success transition-all appearance-none;
+  }
+
+  .stat-card {
+    @apply bg-bg-card border border-border-theme p-4 rounded-xl;
+  }
+
+  .chart-container {
+    @apply bg-bg-card border border-border-theme rounded-xl p-5 relative;
+  }
+}

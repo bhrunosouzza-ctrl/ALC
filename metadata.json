@@ -1,0 +1,6 @@
+{
+  "name": "Analisador Larvário Timóteo",
+  "description": "Sistema completo de análise de dados de coleta de larvas e índices de infestação (IIP/IB) para o município de Timóteo.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["Data Visualization", "Excel Processing"]
+}
