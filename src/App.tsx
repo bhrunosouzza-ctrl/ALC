@@ -5,6 +5,8 @@
 
 import React, { useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line
@@ -37,6 +39,8 @@ export default function App() {
   const [selectedYear, setSelectedYear] = useState<string>('Todos');
   const [selectedCycle, setSelectedCycle] = useState<string>('Todos');
   const [selectedBairro, setSelectedBairro] = useState<string>('Todos');
+  const [selectedActivity, setSelectedActivity] = useState<string>('Todos');
+  const [selectedNeighborhoodDetail, setSelectedNeighborhoodDetail] = useState<NeighborhoodStats | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
   // File Parsing
@@ -74,6 +78,7 @@ export default function App() {
           Ciclo: String(item.Ciclo || ''),
           Bairro: String(item.Bairro || ''),
           Deposito: String(item.Deposito || ''),
+          Tipo_At: String(item.Tipo_At || item.Tipo_Atividade || ''),
           LarvaAegypti: Number(item.LarvaAegypti || 0),
           PupaAegypti: Number(item.PupaAegypti || 0),
           LarvaAlbopictus: Number(item.LarvaAlbopictus || 0),
@@ -94,6 +99,7 @@ export default function App() {
           Data: formatDate(item.Data),
           Ciclo: String(item.Ciclo || ''),
           Bairro: String(item.Bairro || ''),
+          Atividade: String(item.Atividade || ''),
           Total_T: Number(item.Total_T || 0),
           Fechado: Number(item.Fechado || 0),
           Recusa: Number(item.Recusa || 0),
@@ -119,7 +125,7 @@ export default function App() {
   // Derived Data
   const years = useMemo(() => {
     const sYears = samples.map(s => s.DataColeta?.split('/')[2]).filter(Boolean);
-    const vYears = visits.map(v => v.Data?.split('-')[2]).filter(Boolean);
+    const vYears = visits.map(v => v.Data?.split('/')[2]).filter(Boolean);
     return Array.from(new Set([...sYears, ...vYears])).sort();
   }, [samples, visits]);
 
@@ -135,24 +141,32 @@ export default function App() {
     return Array.from(new Set([...sBairros, ...vBairros])).sort();
   }, [samples, visits]);
 
+  const activities = useMemo(() => {
+    const sActs = samples.map(s => s.Tipo_At).filter(Boolean);
+    const vActs = visits.map(v => v.Atividade).filter(Boolean);
+    return Array.from(new Set([...sActs, ...vActs])).sort();
+  }, [samples, visits]);
+
   // Filtered Data
   const filteredSamples = useMemo(() => {
     return samples.filter(s => {
       const year = s.DataColeta?.split('/')[2];
       return (selectedYear === 'Todos' || year === selectedYear) &&
              (selectedCycle === 'Todos' || s.Ciclo === selectedCycle) &&
-             (selectedBairro === 'Todos' || s.Bairro === selectedBairro);
+             (selectedBairro === 'Todos' || s.Bairro === selectedBairro) &&
+             (selectedActivity === 'Todos' || s.Tipo_At === selectedActivity);
     });
-  }, [samples, selectedYear, selectedCycle, selectedBairro]);
+  }, [samples, selectedYear, selectedCycle, selectedBairro, selectedActivity]);
 
   const filteredVisits = useMemo(() => {
     return visits.filter(v => {
-      const year = v.Data?.split('-')[2];
+      const year = v.Data?.split('/')[2];
       return (selectedYear === 'Todos' || year === selectedYear) &&
              (selectedCycle === 'Todos' || v.Ciclo === selectedCycle) &&
-             (selectedBairro === 'Todos' || v.Bairro === selectedBairro);
+             (selectedBairro === 'Todos' || v.Bairro === selectedBairro) &&
+             (selectedActivity === 'Todos' || v.Atividade === selectedActivity);
     });
-  }, [visits, selectedYear, selectedCycle, selectedBairro]);
+  }, [visits, selectedYear, selectedCycle, selectedBairro, selectedActivity]);
 
   // Analytics
   const stats = useMemo(() => {
@@ -163,15 +177,18 @@ export default function App() {
       const current = neighborhoodMap.get(v.Bairro) || {
         bairro: v.Bairro,
         totalVisitas: 0,
+        imoveisTrabalhados: 0,
         imoveisPositivos: 0,
         depositosPositivos: 0,
         iip: 0,
         ib: 0,
         aegyptiCount: 0,
         albopictusCount: 0,
-        outrosCount: 0
+        outrosCount: 0,
+        depositos: {}
       };
       current.totalVisitas += v.Total_T;
+      current.imoveisTrabalhados += v.Total_T;
       neighborhoodMap.set(v.Bairro, current);
     });
 
@@ -180,19 +197,22 @@ export default function App() {
       const current = neighborhoodMap.get(s.Bairro) || {
         bairro: s.Bairro,
         totalVisitas: 0,
+        imoveisTrabalhados: 0,
         imoveisPositivos: 0,
         depositosPositivos: 0,
         iip: 0,
         ib: 0,
         aegyptiCount: 0,
         albopictusCount: 0,
-        outrosCount: 0
+        outrosCount: 0,
+        depositos: {}
       };
 
-      const isPositive = s.LarvaAegypti > 0 || s.PupaAegypti > 0 || s.LarvaAlbopictus > 0 || s.PupaAlbopictus > 0;
+      const isPositive = s.LarvaAegypti > 0 || s.PupaAegypti > 0;
       if (isPositive) {
-        current.imoveisPositivos += 1; // Simplification: each sample is a positive building
+        current.imoveisPositivos += 1; 
         current.depositosPositivos += 1;
+        current.depositos[s.Deposito] = (current.depositos[s.Deposito] || 0) + 1;
       }
 
       current.aegyptiCount += (s.LarvaAegypti + s.PupaAegypti);
@@ -246,8 +266,65 @@ export default function App() {
   }, [filteredSamples]);
 
   const totalInspected = useMemo(() => filteredVisits.reduce((acc, v) => acc + v.Total_T, 0), [filteredVisits]);
-  const totalPositive = useMemo(() => filteredSamples.filter(s => s.LarvaAegypti > 0 || s.PupaAegypti > 0 || s.LarvaAlbopictus > 0 || s.PupaAlbopictus > 0).length, [filteredSamples]);
+  const totalPositive = useMemo(() => filteredSamples.filter(s => s.LarvaAegypti > 0 || s.PupaAegypti > 0).length, [filteredSamples]);
   const avgIIP = totalInspected > 0 ? ((totalPositive / totalInspected) * 100).toFixed(2) : '0.00';
+
+  const generatePDF = () => {
+    const doc = new jsPDF();
+    const timestamp = new Date().toLocaleString('pt-BR');
+
+    // Header
+    doc.setFontSize(18);
+    doc.setTextColor(40);
+    doc.text('Relatório de Monitoramento de Arboviroses', 14, 22);
+    
+    doc.setFontSize(11);
+    doc.setTextColor(100);
+    doc.text(`Município: Timóteo, MG`, 14, 30);
+    doc.text(`Data de Emissão: ${timestamp}`, 14, 35);
+    doc.text(`Filtros: Ano: ${selectedYear} | Ciclo: ${selectedCycle} | Atividade: ${selectedActivity}`, 14, 40);
+
+    // Summary Metrics
+    doc.setFontSize(14);
+    doc.setTextColor(40);
+    doc.text('Resumo Geral', 14, 55);
+    
+    autoTable(doc, {
+      startY: 60,
+      head: [['Métrica', 'Valor']],
+      body: [
+        ['Total de Imóveis Trabalhados', totalInspected.toString()],
+        ['Total de Imóveis Positivos (Aegypti)', totalPositive.toString()],
+        ['Índice de Infestação Predial (IIP) Médio', `${avgIIP}%`],
+        ['Índice de Breteau (IB) Médio', `${(stats.reduce((acc, s) => acc + s.ib, 0) / (stats.length || 1)).toFixed(1)}%`],
+      ],
+      theme: 'striped',
+    });
+
+    // Neighborhood Ranking
+    doc.addPage();
+    doc.setFontSize(14);
+    doc.text('Ranking de Infestação por Bairro (IIP)', 14, 22);
+
+    const tableData = stats.map(item => [
+      item.bairro,
+      `${item.iip.toFixed(1)}%`,
+      `${item.ib.toFixed(1)}%`,
+      item.imoveisTrabalhados.toString(),
+      item.imoveisPositivos.toString(),
+      item.iip > 3.9 ? 'Crítico' : item.iip > 0.9 ? 'Alerta' : 'Controlado'
+    ]);
+
+    autoTable(doc, {
+      startY: 30,
+      head: [['Bairro', 'IIP (%)', 'IB (%)', 'Trabalhados', 'Positivos', 'Status']],
+      body: tableData,
+      theme: 'grid',
+      headStyles: { fillColor: [63, 185, 80] }, // Green success color from theme
+    });
+
+    doc.save(`relatorio-arboviroses-timoteo-${selectedYear}-${selectedCycle}.pdf`);
+  };
 
   return (
     <div className="flex h-screen bg-bg-base text-text-primary font-sans overflow-hidden">
@@ -324,10 +401,28 @@ export default function App() {
               <ChevronRight className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-text-secondary rotate-90" />
             </div>
           </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="sidebar-label">Atividade</label>
+            <div className="relative">
+              <select 
+                value={selectedActivity} 
+                onChange={(e) => setSelectedActivity(e.target.value)}
+                className="sidebar-select"
+              >
+                <option value="Todos">Todas as Atividades</option>
+                {activities.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+              <ChevronRight className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-text-secondary rotate-90" />
+            </div>
+          </div>
         </div>
 
         <div className="mt-auto flex flex-col gap-4">
-          <button className="w-full bg-accent-success text-white py-2.5 rounded-lg text-xs font-bold uppercase tracking-widest hover:brightness-110 transition-all shadow-lg shadow-accent-success/10">
+          <button 
+            onClick={generatePDF}
+            className="w-full bg-accent-success text-white py-2.5 rounded-lg text-xs font-bold uppercase tracking-widest hover:brightness-110 transition-all shadow-lg shadow-accent-success/10"
+          >
             Gerar Relatório PDF
           </button>
           <button 
@@ -467,18 +562,19 @@ export default function App() {
                   {stats.map((neighborhood, i) => {
                     const iip = neighborhood.iip || 0;
                     return (
-                      <div 
+                      <button 
                         key={neighborhood.bairro} 
+                        onClick={() => setSelectedNeighborhoodDetail(neighborhood)}
                         className={cn(
-                          "aspect-square rounded-md transition-all duration-500 flex items-center justify-center text-[8px] font-bold text-center p-1 leading-tight",
-                          iip > 3.9 ? "bg-accent-danger text-white" : 
-                          iip > 0.9 ? "bg-accent-warn text-black" : 
-                          iip > 0 ? "bg-accent-success text-white" : "bg-border-theme/30 text-text-secondary"
+                          "aspect-square rounded-md transition-all duration-300 flex items-center justify-center text-[8px] font-bold text-center p-1 leading-tight hover:scale-110 hover:z-10 shadow-sm",
+                          iip > 3.9 ? "bg-accent-danger text-white shadow-accent-danger/20" : 
+                          iip > 0.9 ? "bg-accent-warn text-black shadow-accent-warn/20" : 
+                          iip > 0 ? "bg-accent-success text-white shadow-accent-success/20" : "bg-border-theme/30 text-text-secondary"
                         )}
-                        title={`${neighborhood.bairro}: ${iip}%`}
+                        title={`${neighborhood.bairro}: ${iip}% (Clique para detalhes)`}
                       >
                         {neighborhood.bairro.substring(0, 6)}
-                      </div>
+                      </button>
                     );
                   })}
                 </div>
@@ -526,6 +622,149 @@ export default function App() {
           </>
         )}
       </main>
+
+      {/* Neighborhood Details Modal */}
+      <AnimatePresence>
+        {selectedNeighborhoodDetail && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-bg-card border border-border-theme rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              <div className="p-6 border-b border-border-theme flex items-center justify-between bg-bg-surface/30">
+                <div>
+                  <h2 className="text-xl font-bold text-text-primary">{selectedNeighborhoodDetail.bairro}</h2>
+                  <p className="text-xs text-text-secondary uppercase tracking-widest mt-1">Detalhes do Setor</p>
+                </div>
+                <button 
+                  onClick={() => setSelectedNeighborhoodDetail(null)}
+                  className="p-2 hover:bg-white/5 rounded-full transition-colors text-text-secondary hover:text-text-primary"
+                >
+                  <Upload className="w-5 h-5 rotate-45" /> {/* Using Upload as a close icon replacement since X is not imported */}
+                </button>
+              </div>
+
+              <div className="p-6 overflow-y-auto custom-scrollbar space-y-8">
+                {/* Metrics Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div className="p-4 rounded-xl bg-bg-surface border border-border-theme">
+                    <p className="text-[10px] text-text-secondary uppercase font-bold mb-1">IIP</p>
+                    <p className={cn(
+                      "text-2xl font-mono font-bold",
+                      selectedNeighborhoodDetail.iip > 3.9 ? "text-accent-danger" : 
+                      selectedNeighborhoodDetail.iip > 0.9 ? "text-accent-warn" : "text-accent-success"
+                    )}>
+                      {selectedNeighborhoodDetail.iip.toFixed(1)}%
+                    </p>
+                  </div>
+                  <div className="p-4 rounded-xl bg-bg-surface border border-border-theme">
+                    <p className="text-[10px] text-text-secondary uppercase font-bold mb-1">IB</p>
+                    <p className="text-2xl font-mono font-bold text-text-primary">
+                      {selectedNeighborhoodDetail.ib.toFixed(1)}%
+                    </p>
+                  </div>
+                  <div className="p-4 rounded-xl bg-bg-surface border border-border-theme">
+                    <p className="text-[10px] text-text-secondary uppercase font-bold mb-1">Trabalhados</p>
+                    <p className="text-2xl font-mono font-bold text-text-primary">
+                      {selectedNeighborhoodDetail.imoveisTrabalhados}
+                    </p>
+                  </div>
+                  <div className="p-4 rounded-xl bg-bg-surface border border-border-theme">
+                    <p className="text-[10px] text-text-secondary uppercase font-bold mb-1">Positivos</p>
+                    <p className="text-2xl font-mono font-bold text-accent-danger">
+                      {selectedNeighborhoodDetail.imoveisPositivos}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  {/* Deposits Chart */}
+                  <div>
+                    <h3 className="text-xs font-bold text-text-secondary uppercase tracking-widest mb-4 flex items-center gap-2">
+                      <Layers className="w-3 h-3" /> Tipos de Depósitos
+                    </h3>
+                    <div className="space-y-3">
+                      {Object.entries(selectedNeighborhoodDetail.depositos)
+                        .sort((a, b) => (b[1] as number) - (a[1] as number))
+                        .map(([type, count]) => (
+                          <div key={type} className="space-y-1">
+                            <div className="flex justify-between text-[10px]">
+                              <span className="text-text-primary font-medium">{type}</span>
+                              <span className="text-text-secondary">{count} focos</span>
+                            </div>
+                            <div className="h-1.5 w-full bg-border-theme rounded-full overflow-hidden">
+                              <motion.div 
+                                initial={{ width: 0 }}
+                                animate={{ width: `${((count as number) / (selectedNeighborhoodDetail.depositosPositivos || 1)) * 100}%` }}
+                                className="h-full bg-accent-warn"
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      {Object.keys(selectedNeighborhoodDetail.depositos).length === 0 && (
+                        <p className="text-xs text-text-secondary italic">Nenhum depósito positivo registrado.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Species Distribution */}
+                  <div>
+                    <h3 className="text-xs font-bold text-text-secondary uppercase tracking-widest mb-4 flex items-center gap-2">
+                      <Activity className="w-3 h-3" /> Distribuição de Espécies
+                    </h3>
+                    <div className="h-[180px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={[
+                              { name: 'Aedes aegypti', value: selectedNeighborhoodDetail.aegyptiCount },
+                              { name: 'Aedes albopictus', value: selectedNeighborhoodDetail.albopictusCount },
+                              { name: 'Outros', value: selectedNeighborhoodDetail.outrosCount },
+                            ].filter(d => d.value > 0)}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={40}
+                            outerRadius={60}
+                            paddingAngle={5}
+                            dataKey="value"
+                          >
+                            <Cell fill="#F85149" />
+                            <Cell fill="#D29922" />
+                            <Cell fill="#30363D" />
+                          </Pie>
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: '#1C2128', border: '1px solid #30363D', borderRadius: '8px' }}
+                            itemStyle={{ fontSize: '10px' }}
+                          />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="flex justify-center gap-4 mt-2">
+                      <div className="flex items-center gap-1.5 text-[10px] text-text-secondary">
+                        <div className="w-2 h-2 rounded-full bg-accent-danger" /> Aegypti
+                      </div>
+                      <div className="flex items-center gap-1.5 text-[10px] text-text-secondary">
+                        <div className="w-2 h-2 rounded-full bg-accent-warn" /> Albopictus
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-6 border-t border-border-theme bg-bg-surface/30 flex justify-end">
+                <button 
+                  onClick={() => setSelectedNeighborhoodDetail(null)}
+                  className="px-6 py-2 bg-accent-success text-white rounded-lg text-xs font-bold uppercase tracking-widest hover:brightness-110 transition-all"
+                >
+                  Fechar Detalhes
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

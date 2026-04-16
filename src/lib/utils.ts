@@ -12,6 +12,7 @@ export interface LarvalSample {
   Ciclo: string;
   Bairro: string;
   Deposito: string;
+  Tipo_At: string; // Added activity type
   LarvaAegypti: number;
   PupaAegypti: number;
   LarvaAlbopictus: number;
@@ -31,6 +32,7 @@ export interface VisitRecord {
   Data: string;
   Ciclo: string;
   Bairro: string;
+  Atividade: string; // Added activity type
   Total_T: number; // Total Trabalhado (Inspected)
   Fechado: number;
   Recusa: number;
@@ -50,6 +52,7 @@ export interface VisitRecord {
 export interface NeighborhoodStats {
   bairro: string;
   totalVisitas: number;
+  imoveisTrabalhados: number; // Added for modal
   imoveisPositivos: number;
   depositosPositivos: number;
   iip: number; // Building Infestation Index
@@ -57,4 +60,5 @@ export interface NeighborhoodStats {
   aegyptiCount: number;
   albopictusCount: number;
   outrosCount: number;
+  depositos: Record<string, number>; // Added for modal
 }
